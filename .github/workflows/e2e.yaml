@@ -19,28 +19,23 @@ name: E2E
 on:
   pull_request:
   push:
-    branches: 
+    branches:
       - master
     tags:
       - 'v*'
 
 jobs:
   nginx:
-    runs-on: ubuntu-18.04
-    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v2
-      - name: checkout submodules
-        shell: bash
-        run: |
-          git submodule sync --recursive
-          git -c protocol.version=2 submodule update --init --force --recursive --depth=1
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
       - uses: actions/setup-java@v1
         with:
           java-version: 8
-      - name: Set environment
-        run: export MAVEN_OPTS='-Dmaven.repo.local=~/.m2/repository -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+CMSClassUnloadingEnabled -XX:+UseConcMarkSweepGC -XX:-UseGCOverheadLimit -Xmx3g'
-      - name: Build E2E Docker
-        run: ./mvnw -f ./test/e2e/pom.xml package
-      - name: Run Nginx Test
-        run: ./mvnw -f ./test/e2e/e2e-test/nginx/pom.xml verify
+      - name: Run E2E Tests
+        uses: apache/skywalking-infra-e2e@cf589b4a0b9f8e6f436f78e9cfd94a1ee5494180
+        with:
+          e2e-file: test/e2e/e2e.yaml

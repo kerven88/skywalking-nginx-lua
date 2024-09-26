@@ -25,22 +25,27 @@ local json = require('cjson.safe')
 local metadata_shdict = ngx.shared.tracing_buffer
 local ngx = ngx
 local nginxComponentId = 6000
-
-
 local Tracer = {}
 
 
 function Tracer:start(upstream_name, correlation)
     local serviceName = metadata_shdict:get("serviceName")
     local serviceInstanceName = metadata_shdict:get('serviceInstanceName')
-    local includeHostInEntrySpan = metadata_shdict:get('includeHostInEntrySpan')
-    local tracingContext = TC.new(serviceName, serviceInstanceName)
+    local req_uri = ngx.var.uri
+    if (Util.checkIgnoreSuffix(req_uri)) then
+        local tracingContext =  TC.newNoOP()
+        local ctx = ngx.ctx
+        ctx.tracingContext = tracingContext
+        ctx.entrySpan = Span.newNoOP()
+        ctx.exitSpan = Span.newNoOP()
+        ctx.is_finished = false
+        return
+    end
 
+    local includeHostInEntrySpan = metadata_shdict:get('includeHostInEntrySpan')
+    local tracingContext = TC.new(serviceName, serviceInstanceName, ngx.var.http_request_id)
     -- Constant pre-defined in SkyWalking main repo
     -- 6000 represents Nginx
-
-    local req_uri = ngx.var.uri
-
     local contextCarrier = Util.tablepool_fetch("sw_contextCarrier")
     contextCarrier["sw8"] = ngx.var.http_sw8
     contextCarrier["sw8-correlation"] = ngx.var.http_sw8_correlation
@@ -51,6 +56,7 @@ function Tracer:start(upstream_name, correlation)
     else
         entrySpan = TC.createEntrySpan(tracingContext, req_uri, nil, contextCarrier)
     end
+
     Span.start(entrySpan, time_now)
     Span.setComponentId(entrySpan, nginxComponentId)
     Span.setLayer(entrySpan, Layer.HTTP)
@@ -59,19 +65,18 @@ function Tracer:start(upstream_name, correlation)
     Span.tag(entrySpan, 'http.params',
              ngx.var.scheme .. '://' .. ngx.var.host .. ngx.var.request_uri )
 
+    ------------------------------------------------------
     contextCarrier = Util.tablepool_fetch("sw_contextCarrier")
     -- Use the same URI to represent incoming and forwarding requests
     -- Change it if you need.
-    local upstreamServerName = upstream_name
-    ------------------------------------------------------
-    local exitSpan = TC.createExitSpan(tracingContext, req_uri, entrySpan,
-                        upstreamServerName, contextCarrier, correlation)
+    local exitSpan = TC.createExitSpan(tracingContext, req_uri, entrySpan)
     Span.start(exitSpan, time_now)
     Span.setComponentId(exitSpan, nginxComponentId)
     Span.setLayer(exitSpan, Layer.HTTP)
 
-    for name, value in pairs(contextCarrier) do
-        ngx.req.set_header(name, value)
+    local upstreamServerName = upstream_name
+    if upstreamServerName then
+        TC.inject(tracingContext, exitSpan, upstreamServerName, correlation)
     end
 
     -- Push the data in the context
@@ -82,12 +87,23 @@ function Tracer:start(upstream_name, correlation)
     ctx.is_finished = false
 end
 
+-- inject an exit span context and correlation context into carrier
+-- since v1.0.0
+function Tracer:inject(exitSpan, peer, correlation)
+    local ctx = ngx.ctx
+    local context = ctx.tracingContext
+
+    if not context.is_noop and exitSpan ~= nil and not ctx.is_finished then
+        TC.inject(context, exitSpan, peer, correlation)
+    end
+end
+
 function Tracer:finish()
     -- Finish the exit span when received the first response package from upstream
     if ngx.ctx.exitSpan ~= nil and not ngx.ctx.is_finished then
         local upstream_status = tonumber(ngx.var.upstream_status)
         if upstream_status then
-            Span.tag(ngx.ctx.exitSpan, 'http.status', upstream_status)
+            Span.tag(ngx.ctx.exitSpan, 'http.status_code', upstream_status)
         end
         Span.finish(ngx.ctx.exitSpan, ngx.now() * 1000)
         ngx.ctx.exitSpan = nil
@@ -105,7 +121,7 @@ function Tracer:prepareForReport()
     end
 
     local ngxstatus = ngx.var.status
-    Span.tag(entrySpan, 'http.status', ngxstatus)
+    Span.tag(entrySpan, 'http.status_code', ngxstatus)
     if tonumber(ngxstatus) >= 500 then
         Span.errorOccurred(entrySpan)
     end

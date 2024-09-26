@@ -17,8 +17,10 @@
 
 local Util = require('skywalking.util')
 local Span = require('skywalking.span')
+local SegmentRef = require('skywalking.segment_ref')
 local CorrelationContext = require('skywalking.correlation_context')
 
+local CONTEXT_CARRIER_KEY = 'sw8'
 local CONTEXT_CORRELATION_KEY = 'sw8-correlation'
 
 -------------- Internal Object-------------
@@ -107,14 +109,21 @@ function _M.newNoOP()
     return {is_noop = true}
 end
 
-function _M.new(serviceName, serviceInstanceName)
+function _M.new(serviceName, serviceInstanceName, requestId)
     if serviceInstanceName == nil or serviceName == nil then
         return _M.newNoOP()
     end
 
+    local segment_id = Util.newID()
+    -- use request_id as trace_id if it is present
+    local trace_id = requestId
+    if trace_id == nil then
+        trace_id = segment_id
+    end
+
     local tracing_context = Util.tablepool_fetch()
-    tracing_context.trace_id = Util.newID()
-    tracing_context.segment_id = tracing_context.trace_id
+    tracing_context.trace_id = trace_id
+    tracing_context.segment_id = segment_id
     tracing_context.service = serviceName
     tracing_context.service_instance = serviceInstanceName
     tracing_context.internal = Internal.new()
@@ -140,22 +149,29 @@ end
 
 -- Delegate to Span.createExitSpan
 -- @param contextCarrier could be nil if don't need to inject any context to propagate
-function _M.createExitSpan(tracingContext, operationName, parent, peer, contextCarrier, correlation)
+function _M.createExitSpan(tracingContext, operationName, parent)
     if tracingContext.is_noop then
         return Span.newNoOP()
     end
 
-    if contextCarrier then
-        if correlation then
-            for name, value in pairs(correlation) do
-                CorrelationContext.put(tracingContext.correlation, name, value)
-            end
-        end
+    return Span.createExitSpan(operationName, tracingContext, parent)
+end
 
-        contextCarrier[CONTEXT_CORRELATION_KEY] = CorrelationContext.serialize(tracingContext.correlation)
+-- Inject an exit span context and correlation context into context carrier to propagate
+-- @param correlation is used to transport custom data to downstream service
+function _M.inject(tracingContext, exitSpan, peer, correlation)
+    Span.setPeer(exitSpan, peer)
+
+    local injectableRef = SegmentRef.createInjectableRef(tracingContext, exitSpan)
+    local correlationData = tracingContext.correlation
+    if correlation then
+        for name, value in pairs(correlation) do
+            CorrelationContext.put(correlationData, name, value)
+        end
     end
 
-    return Span.createExitSpan(operationName, tracingContext, parent, peer, contextCarrier)
+    ngx.req.set_header(CONTEXT_CARRIER_KEY, SegmentRef.serialize(injectableRef))
+    ngx.req.set_header(CONTEXT_CORRELATION_KEY, CorrelationContext.serialize(correlationData))
 end
 
 -- After all active spans finished, this segment will be treated as finished status.

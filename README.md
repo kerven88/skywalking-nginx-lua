@@ -5,7 +5,7 @@ Apache SkyWalking Nginx Agent
 
 [![Twitter Follow](https://img.shields.io/twitter/follow/asfskywalking.svg?style=for-the-badge&label=Follow&logo=twitter)](https://twitter.com/AsfSkyWalking)
 
-![CI](https://github.com/apache/skywalking-nginx-lua/workflows/CI/badge.svg?branch=master)
+[![CI](https://github.com/apache/skywalking-nginx-lua/actions/workflows/ci.yaml/badge.svg)](https://github.com/apache/skywalking-nginx-lua/actions/workflows/ci.yaml)
 
 
 [**SkyWalking**](https://github.com/apache/skywalking) Nginx Agent provides the native tracing capability for Nginx powered by Nginx LUA module.
@@ -36,6 +36,8 @@ http {
         metadata_buffer:set('serviceInstanceName', 'User Service Instance Name')
         -- type 'boolean', mark the entrySpan include host/domain
         metadata_buffer:set('includeHostInEntrySpan', false)
+        -- set ignoreSuffix, If the operation name(HTTP URI) of the entry span includes suffixes in this set, this segment would be ignored. Multiple values should be separated by a comma(',').
+        -- require("skywalking.util").set_ignore_suffix(".jpg,.jpeg,.js,.css,.png,.bmp,.gif,.ico,.mp3,.mp4,.svg")
 
         -- set random seed
         require("skywalking.util").set_randomseed()
@@ -117,7 +119,7 @@ All codes in the `lib/skywalking` require the `*_test.lua` to do the UnitTest. T
 - LuaRocks
 
 The following libs are required in runtime or test cases, please use `LuaRocks` to install them.
-- lua-cjson. NOTICE, some platforms such as MacOS 10.15 may have issue with the latest release of this lib, consider to install an old release.(`luarocks install lua-cjson 2.1.0-1`)
+- lua-cjson2. NOTICE, lua-cjson2 is to fix the bug in lua-cjson 2.1.0-1. ref to: https://github.com/apache/skywalking-nginx-lua/pull/94
 - luaunit
 - lua-resty-jit-uuid
 
@@ -129,7 +131,8 @@ The following APIs are for developers or using this lib out of the Nginx case.
 ## Nginx APIs
 - **startTimer**, `require("skywalking.client"):startBackendTimer("http://127.0.0.1:8080")`. Start the backend timer. This timer register the metadata and report traces to the backend.
 - **destroyBackendTimer**, `require("skywalking.client"):destroyBackendTimer()`. Stop the timer created by `startBackendTimer`, and clean unreported data.
-- **start**, `require("skywalking.tracer"):start("upstream service", correlation)`. Begin the tracing before the upstream begin. The custom data (table type) can be injected as the second parameter, and then they will be propagated to the downstream service.
+- **start**, `require("skywalking.tracer"):start("upstream service", correlation)`. Begin the tracing before the upstream beginning. The custom data (table type) can be injected as the second parameter, and then they will be propagated to the downstream service. If `upstream service` could be determined precisely later, keep it as `nil` and call `inject` method when peer(upstream address) is resolved by load balancer and DNS resolver.
+- **inject**, `require("skywalking.tracer"):inject(exitSpan, peer, correlation)`. Inject an exit span context and correlation context into carrier, and then they will be propagated to the downstream service. (**Since v1.0**, advanced API, called when you update the peer of exit span.)
 - **finish**, `require("skywalking.tracer"):finish()`. Finish the tracing for this HTTP request.
 - **prepareForReport**, `require("skywalking.tracer"):prepareForReport()`. Prepare the finished segment for further report.
 
@@ -138,20 +141,24 @@ The following APIs are for developers or using this lib out of the Nginx case.
 - `TracingContext.new(serviceId, serviceInstID)`, create an active tracing context.
 - `TracingContext.newNoOP()`, create a no OP tracing context.
 - `TracingContext.drainAfterFinished()`, fetch the segment includes all finished spans.
+- `TracingContext.inject(exitSpan, peer, correlation)`, inject an exit span context and correlation context into carrier, and then they will be propagated to the downstream service by outgoing HTTP request. (**Since v1.0**, advanced API, called when you update the peer of exit span.)
 
 Create 2 kinds of span
 - `TracingContext.createEntrySpan(operationName, parent, contextCarrier)`
 - `TracingContext.createExitSpan(operationName, parent, peer, contextCarrier)`
 
+Create 2 kinds of span API v1
+- `TracingContext.createEntrySpan(operationName, parent, contextCarrier)`
+- `TracingContext.createExitSpan(operationName, parent)`
 
 # Contact Us
 * Submit an [issue](https://github.com/apache/skywalking/issues) with `[NIGNX-LUA]` as the issue title prefix.
 * Mail list: **dev@skywalking.apache.org**. Mail to `dev-subscribe@skywalking.apache.org`, follow the reply to subscribe the mail list.
-* Join `skywalking` channel at [Apache Slack](https://join.slack.com/t/the-asf/shared_invite/enQtNzc2ODE3MjI1MDk1LTAyZGJmNTg1NWZhNmVmOWZjMjA2MGUyOGY4MjE5ZGUwOTQxY2Q3MDBmNTM5YTllNGU4M2QyMzQ4M2U4ZjQ5YmY). If the link is not working, find the latest one at [Apache INFRA WIKI](https://cwiki.apache.org/confluence/display/INFRA/Slack+Guest+Invites).
-* QQ Group: 392443393(2000/2000, not available), 901167865(available)
+* Send `Request to join SkyWalking slack` mail to the mail list(`dev@skywalking.apache.org`), we will invite you in.
+* For Chinese speaker, send `[CN] Request to join SkyWalking slack` mail to the mail list(`dev@skywalking.apache.org`), we will invite you in.
 
 # Release Guide
-All committers should follow [Release Guide](release.md) to publish the official release.
+All committers should follow [Release Guide](RELEASING.md) to publish the official release.
 
 # License
 Apache 2.0

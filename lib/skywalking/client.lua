@@ -31,6 +31,7 @@ local initialized = false
 -- After report instance properties successfully, it sends keep alive packages.
 function Client:startBackendTimer(backend_http_uri)
     initialized = true
+    self.stopped = false
     local metadata_buffer = ngx.shared.tracing_buffer
 
     -- The codes of timer setup is following the OpenResty timer doc
@@ -42,6 +43,7 @@ function Client:startBackendTimer(backend_http_uri)
 
     check = function(premature)
         if not premature and not self.stopped then
+            log(ngx.INFO, "running timer")
             local instancePropertiesSubmitted = metadata_buffer:get('instancePropertiesSubmitted')
             if (instancePropertiesSubmitted == nil or instancePropertiesSubmitted == false) then
                 self:reportServiceInstance(metadata_buffer, backend_http_uri)
@@ -204,8 +206,13 @@ function Client:reportTraces(metadata_buffer, backend_http_uri)
         end
 
         segmentTransform = segmentTransform .. segment
-        segment = queue:rpop(Const.segment_queue)
         count = count + 1
+
+        if ngx.worker.exiting() then
+            break
+        end
+
+        segment = queue:rpop(Const.segment_queue)
 
         if count >= SEGMENT_BATCH_COUNT then
             if sendSegments('[' .. segmentTransform .. ']', backend_http_uri) then

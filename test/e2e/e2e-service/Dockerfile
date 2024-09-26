@@ -1,5 +1,3 @@
-#!/usr/bin/env bash
-
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -16,21 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-WORK_DIRECTORY=$1
-RESPOSITORY=$2
-COMMIT_ID=$3
-DIST_DIRECTORY=$4
+ARG E2E_SERVICE_NAME
+ARG E2E_SERVICE_VERSION
 
-HOME_DIR="$(cd "$(dirname $0)"; pwd)"
+FROM ghcr.io/apache/skywalking/${E2E_SERVICE_NAME}:${E2E_SERVICE_VERSION}
+FROM apache/skywalking-java-agent:8.10.0-java8
 
-git clone $RESPOSITORY $WORK_DIRECTORY
+COPY --from=0 /app.jar /app.jar
 
-cd $WORK_DIRECTORY
-
-git checkout $COMMIT_ID
-
-mvn -B package -DskipTests
-
-[[ -d $DIST_DIRECTORY ]] || mkdir -p $DIST_DIRECTORY
-
-cp $WORK_DIRECTORY/dist/* $DIST_DIRECTORY/
+ENV JAVA_TOOL_OPTIONS=-javaagent:/skywalking/agent/skywalking-agent.jar
+CMD ["java", "-jar", "/app.jar"]
